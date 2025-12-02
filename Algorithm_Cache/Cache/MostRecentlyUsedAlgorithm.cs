@@ -1,32 +1,55 @@
-﻿using System.Linq;
-
-namespace Algorithm_Cache.Cache
+﻿namespace Algorithm_Cache.Cache
 {
     public class MostRecentlyUsedAlgorithmExecute
     {
         public void Execute()
         {
-            //Example A B C D E C D B:
-            var lRUCache = new MostRecentlyUsedAlgorithm(2);
+            // Wiki Example A B C D E C D B:
+            var workerMRU = new MostRecentlyUsedAlgorithm(4);            
+            workerMRU.Put("A", "A"); 
+            workerMRU.Put("B", "B");
+            workerMRU.Put("C", "C");
+            workerMRU.Put("D", "D");
+            workerMRU.Put("E", "E");
+            workerMRU.Put("C", "C");
+            workerMRU.Put("D", "D");
+            workerMRU.Put("B", "B");
 
-            lRUCache.Put("A", "A"); // cache is {1=1}
-            lRUCache.Put("B", "B"); // cache is {1=1, 2=2}
-            var t = lRUCache.Get("A");    // return 1
-            lRUCache.Put("C","C"); // LRU key was 2, evicts key 2, cache is {1=1, 3=3}
-            t = lRUCache.Get("B");    // returns -1 (not found)
-            lRUCache.Put("D", "D"); // LRU key was 1, evicts key 1, cache is {4=4, 3=3}
-            t = lRUCache.Get("A");    // return -1 (not found)
-            t = lRUCache.Get("C");    // return 3
-            t = lRUCache.Get("D");    // return 4
+            // Print Result
+            PrintCache();
+
+            void PrintCache()
+            {
+                Console.WriteLine("\n=== Cache 內容 ===");
+                Console.WriteLine($"容量: {workerMRU._capacity}, 目前數量: {workerMRU._cache.Count}");
+
+                Console.WriteLine("\n_links (由最近到最舊):");
+                foreach (var item in workerMRU._links)
+                {
+                    Console.WriteLine($"  Key: {item.key}, Value: {item.value}");
+                }
+
+                Console.WriteLine("\n_cache (Dictionary):");
+                foreach (var kvp in workerMRU._cache)
+                {
+                    Console.WriteLine($"  Key: {kvp.Key}, Value: ({kvp.Value.Value.key}, {kvp.Value.Value.value})");
+                }
+                Console.WriteLine("==================\n");
+            }
         }
+
+
     }
 
     public class MostRecentlyUsedAlgorithm
     {
-        private readonly int _capacity;
-        private readonly Dictionary<string, LinkedListNode<(string key, string value)>> _cache;
-        private readonly LinkedList<(string key, string value)> _links;
+        public readonly int _capacity;
+        public readonly Dictionary<string, LinkedListNode<(string key, string value)>> _cache;
+        public readonly LinkedList<(string key, string value)> _links;
 
+        /// <summary>
+        /// 1. 建構式 - 快取策略容量上限
+        /// </summary>
         public MostRecentlyUsedAlgorithm(int capacity)
         {
             _capacity = capacity;
@@ -34,6 +57,9 @@ namespace Algorithm_Cache.Cache
             _links = new LinkedList<(string key, string value)>();
         }
 
+        /// <summary>
+        /// 2. 取值的處理 (同 LRU 處理) 
+        /// </summary>
         public string Get(string key)
         {
             if (!_cache.ContainsKey(key))
@@ -45,9 +71,12 @@ namespace Algorithm_Cache.Cache
             return node.Value.value;
         }
 
-
+        /// <summary>
+        /// 3. 存值的處理
+        /// </summary>
         public void Put(string key, string value)
         {
+            // 3-1. 存在的狀況同 LRU 
             if (_cache.ContainsKey(key))
             {                
                 var node = _cache[key];
@@ -59,11 +88,13 @@ namespace Algorithm_Cache.Cache
             }
             else 
             {
+                // 3-2. [關鍵] MRU 與 LRU 關鍵差異在刪除的快取策略
                 if (_cache.Count() >= _capacity)
                 {
-                    var lastNode = _links.Last;                    
-                    _cache.Remove(lastNode.Value.key);
-                    _links.RemoveLast();                
+                    // MRU 刪除最近使用的 : 與 FRU 差異在此
+                    var firstNode = _links.First;                    
+                    _cache.Remove(firstNode.Value.key);                    
+                    _links.RemoveFirst();
                 }
 
                 var newNode = _links.AddFirst((key, value));
