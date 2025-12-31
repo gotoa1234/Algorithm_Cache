@@ -1,33 +1,29 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Algorithm_Cache.Cache
+﻿namespace Algorithm_Cache.Cache
 {
     public class LRU2Cache
     {
-        private readonly int _capacity;// 快取空間筆數
-        private readonly Dictionary<int, Node> _cache; // 主快取
+        private readonly Dictionary<string, Node> _cache; // 主快取
+        private readonly static int LRU_K_Times = 2;// 冷數據閥值   
+        private readonly LRU _HotData;// 熱數據 - LRU
+        private readonly FIFO _ColdData;// 冷數據 - FIFO
+        private readonly int _capacity;
 
-        // 冷數據 - FIFO
-        private readonly Dictionary<int, LinkedListNode<int>> _historyNodes; // 歷史佇列節點
-        private readonly LinkedList<int> _historyQueue; // 只訪問過一次的佇列 (FIFO)
-
-        // 熱數據 - LRU
-        private readonly Dictionary<int, LinkedListNode<int>> _cacheNodes; // 快取佇列節點
-        private readonly LinkedList<int> _cacheQueue; // 訪問過兩次以上的佇列 (LRU)
-
+        /// <summary>
+        /// 1. 建構式 - 配置
+        /// </summary>
+        /// <param name="capacity"></param>
         public LRU2Cache(int capacity)
         {
             _capacity = capacity;
-            _cache = new Dictionary<int, Node>();
-            _historyNodes = new Dictionary<int, LinkedListNode<int>>();
-            _historyQueue = new LinkedList<int>();
+            _cache = new Dictionary<string, Node>();
 
-            _cacheNodes = new Dictionary<int, LinkedListNode<int>>();
-            _cacheQueue = new LinkedList<int>();
+            // 1-1. 配置冷熱數據比例：25% 冷數據，75% 熱數據
+            int coldCapacity = Math.Max(1, capacity / 4);
+            int hotCapacity = capacity - coldCapacity;
+
+            // 1-2. 初始化冷熱數據上限
+            _HotData = new LRU { LRUCapacity = hotCapacity };
+            _ColdData = new FIFO { HistoryCapacity = coldCapacity };
         }
 
         /// <summary>
@@ -35,63 +31,63 @@ namespace Algorithm_Cache.Cache
         /// </summary>
         public void Execute()
         {
-            var cache = new LRU2Cache(3);
+            var cache = new LRU2Cache(12);// 熱數據上限 : 9  + 冷數據上限 3
 
-            cache.Put(1, 1);  // [1]_history
-            cache.Put(2, 2);  // [1,2]_history
-            cache.Put(3, 3);  // [1,2,3]_history
+            cache.Put("A", "A");// 加入冷數據 [A]
+            cache.Put("B", "B");// 加入冷數據 [B, A]
+            cache.Put("C", "C");// 加入冷數據 [C, B, A]            
+            cache.Put("D", "D");// 加入冷數據 [D, C, B] ，將 A 從冷數據移除，因為上限為 3
+            var result = cache.Get("A");// Not Found 因為 A 不在冷熱數據中
+            result = cache.Get("D");// 冷數據移除 [C, B] ， D 前往熱數據 [D]
+            cache.Put("E", "E");// 加入冷數據 [E, C, B] ， 熱數據 [D]            
+            result = cache.Get("B");// 冷數據移除 [E, C] ， B 前往熱數據 [B, D]
+            cache.Put("E", "E2");// 冷數據移除 [C] ， E 前往熱數據 [E, B, D]
 
-            var t = cache.Get(1); // 1, 提升到 cache: []_history, [1]_cache
-            cache.Put(4, 4);      // 淘汰 2 (history 中最早): [3,4]_history, [1]_cache
-
-            t = cache.Get(3);     // 3, 提升到 cache: [4]_history, [3,1]_cache
-            t = cache.Get(1);     // 1, 保持在 cache 前面: [4]_history, [1,3]_cache
-
-            cache.Put(5, 5);      // 淘汰 4 (history): [5]_history, [1,3]_cache
-            t = cache.Get(3);     // 3, [5]_history, [3,1]_cache
-
-            cache.Put(6, 6);      // 容量滿，淘汰 cache 的 LRU (1): [5,6]_history, [3]_cache
-
-            // 輸出: 1, 3, 1, 3
+            // 輸出:  冷 :[C] , 熱 :[E, B, D]
         }
 
         /// <summary>
-        /// 獲取值
+        /// 2. Get 獲取方法
         /// </summary>
-        public int Get(int key)
+        public string Get(string key)
         {
             if (!_cache.ContainsKey(key))
-                return -1;
+                return "Not Found!";
 
+            // 2-1. 提升權重
             var node = _cache[key];
             PromoteNode(key, node);
             return node.Value;
         }
 
         /// <summary>
-        /// 設定鍵值
+        /// 3. 設定鍵值
         /// </summary>
-        public void Put(int key, int value)
+        public void Put(string key, string value)
         {
+            // 3-1. 無空間直接結束
             if (_capacity == 0)
                 return;
 
-            // 已存在的 key
+            // 3-2. 快取檢查，若被加入冷熱數據 中，皆可查詢到
             if (_cache.ContainsKey(key))
             {
                 var node = _cache[key];
-                node.Value = value;
+                node.Value = value;     
+                
+                // 3-3. 在冷數據中，重複 Put 的 Key 也可以升級成熱數據 
+                // ※ Put 需依照應用情境，來決定是否提升權重
                 PromoteNode(key, node);
             }
             else
             {
-                // 需要淘汰
+                // 3-3. 保存的數據達上限時，需要移除
                 if (_cache.Count >= _capacity)
                 {
                     Evict();
                 }
 
-                // 新增節點，首次訪問放入 historyQueue
+                // 3-4. 新增節點到冷數據區
                 var newNode = new Node
                 {
                     Key = key,
@@ -102,81 +98,160 @@ namespace Algorithm_Cache.Cache
                 };
                 _cache[key] = newNode;
 
-                var listNode = _historyQueue.AddLast(key);
-                _historyNodes[key] = listNode;
+                // 3-5. 檢查冷數據區是否需要淘汰，達到上限時，移除最早加入的
+                if (_ColdData.HistoryQueue.Count >= _ColdData.HistoryCapacity)
+                {
+                    var oldestKey = _ColdData.HistoryQueue.First.Value;
+                    _ColdData.HistoryQueue.RemoveFirst();
+                    _ColdData.HistoryNodes.Remove(oldestKey);
+                    _cache.Remove(oldestKey);
+                }
+
+                var listNode = _ColdData.HistoryQueue.AddLast(key);
+                _ColdData.HistoryNodes[key] = listNode;
             }
         }
 
         /// <summary>
-        /// 提升節點優先級
+        /// 4. 提升節點優先級
         /// </summary>
-        private void PromoteNode(int key, Node node)
+        private void PromoteNode(string key, Node node)
         {
+            // 4-1. 提升訪問權重
             node.AccessCount++;
 
-            // 第一次訪問 -> 第二次訪問：從 historyQueue 移到 cacheQueue
-            if (node.AccessCount == 2)
+            // 4-2. LRU-K 這裡的 K 依照應用情境配置合理值，範例為 2 
+            if (node.AccessCount == LRU_K_Times)
             {
                 node.SecondAccessTime = DateTime.Now;
 
-                // 從 historyQueue 移除
-                if (_historyNodes.ContainsKey(key))
+                // 4-3. 從冷數據區移除
+                if (_ColdData.HistoryNodes.ContainsKey(key))
                 {
-                    _historyQueue.Remove(_historyNodes[key]);
-                    _historyNodes.Remove(key);
+                    _ColdData.HistoryQueue.Remove(_ColdData.HistoryNodes[key]);
+                    _ColdData.HistoryNodes.Remove(key);
                 }
 
-                // 加入 cacheQueue (最前面 = 最近使用)
-                var listNode = _cacheQueue.AddFirst(key);
-                _cacheNodes[key] = listNode;
-            }
-            // 已經在 cacheQueue 中，移到最前面
-            else if (node.AccessCount > 2)
-            {
-                if (_cacheNodes.ContainsKey(key))
+                // 4-4. 檢查熱數據區容量，若達熱數據上限，要遵循 LRU 移除最久未被使用的
+                if (_HotData.CacheQueue.Count >= _HotData.LRUCapacity)
                 {
-                    _cacheQueue.Remove(_cacheNodes[key]);
-                    var listNode = _cacheQueue.AddFirst(key);
-                    _cacheNodes[key] = listNode;
+                    var lruKey = _HotData.CacheQueue.Last.Value;
+                    _HotData.CacheQueue.RemoveLast();
+                    _HotData.CacheNodes.Remove(lruKey);
+                    _cache.Remove(lruKey);
+                }
+
+                // 4-5. 正式加入熱數據區 (完成 : 冷數據 -> 熱數據)
+                var listNode = _HotData.CacheQueue.AddFirst(key);
+                _HotData.CacheNodes[key] = listNode;
+            }
+            //4-6. 已被加入到熱數據
+            else if (node.AccessCount > LRU_K_Times)
+            {
+                // 4-7. 遵循 LRU 在熱數據區內移到最前面
+                if (_HotData.CacheNodes.ContainsKey(key))
+                {
+                    _HotData.CacheQueue.Remove(_HotData.CacheNodes[key]);
+                    var listNode = _HotData.CacheQueue.AddFirst(key);
+                    _HotData.CacheNodes[key] = listNode;
                 }
             }
         }
 
         /// <summary>
-        /// 淘汰策略：優先淘汰 historyQueue (只訪問一次)，其次淘汰 cacheQueue 的 LRU
+        /// 5. 淘汰策略：優先淘汰 historyQueue (只訪問一次)，其次淘汰 cacheQueue 的 LRU
         /// </summary>
         private void Evict()
         {
-            int keyToRemove;
+            string keyToRemove;
 
-            // 優先淘汰只訪問過一次的頁面 (FIFO)
-            if (_historyQueue.Count > 0)
+            // 5-1. 優先淘汰冷數據區
+            if (_ColdData.HistoryQueue.Count > 0)
             {
-                keyToRemove = _historyQueue.First.Value;
-                _historyQueue.RemoveFirst();
-                _historyNodes.Remove(keyToRemove);
+                keyToRemove = _ColdData.HistoryQueue.First.Value;
+                _ColdData.HistoryQueue.RemoveFirst();
+                _ColdData.HistoryNodes.Remove(keyToRemove);
             }
-            // 否則淘汰 cacheQueue 中最久未使用的 (LRU)
-            else
+            // 5-2. 否則淘汰熱數據區的-最久未使用的 (LRU)
+            else if (_HotData.CacheQueue.Count > 0)
             {
-                keyToRemove = _cacheQueue.Last.Value;
-                _cacheQueue.RemoveLast();
-                _cacheNodes.Remove(keyToRemove);
+                keyToRemove = _HotData.CacheQueue.Last.Value;
+                _HotData.CacheQueue.RemoveLast();
+                _HotData.CacheNodes.Remove(keyToRemove);
+            }
+            else// 5-3. 沒有可淘汰的狀況
+            {
+                return; 
             }
 
             _cache.Remove(keyToRemove);
         }
 
+        #region 內部類別
+
         /// <summary>
-        /// 節點資料結構
+        /// FIFO 結構 (冷數據)
         /// </summary>
+        private class FIFO
+        {
+            /// <summary>
+            /// 快取空間筆數
+            /// </summary>
+            public int HistoryCapacity { get; set; }
+
+            /// <summary>
+            /// 歷史佇列節點
+            /// </summary>
+            public Dictionary<string, LinkedListNode<string>> HistoryNodes { get; set; } = new Dictionary<string, LinkedListNode<string>>();
+
+            /// <summary>
+            /// 只訪問過一次的佇列 (FIFO)
+            /// </summary>
+            public LinkedList<string> HistoryQueue { get; set; } = new LinkedList<string>();
+        }
+
+        /// <summary>
+        /// LRU 結構 (熱數據)
+        /// </summary>
+        private class LRU
+        {
+            /// <summary>
+            /// 快取空間筆數
+            /// </summary>
+            public int LRUCapacity { get; set; }
+
+            /// <summary>
+            /// 快取佇列節點
+            /// </summary>
+            public Dictionary<string, LinkedListNode<string>> CacheNodes { get; set; } = new Dictionary<string, LinkedListNode<string>>();
+
+            /// <summary>
+            /// 訪問過兩次以上的佇列 (LRU)
+            /// </summary>
+            public LinkedList<string> CacheQueue = new LinkedList<string>();
+        }
+
         private class Node
         {
-            public int Key { get; set; }
-            public int Value { get; set; }
+            public string Key { get; set; }
+            public string Value { get; set; }
+
+            /// <summary>
+            /// 存取次數
+            /// </summary>
             public int AccessCount { get; set; }
-            public DateTime FirstAccessTime { get; set; }// 檢視用 - LinkedList 已有順序
-            public DateTime? SecondAccessTime { get; set; }// 檢視用 - LinkedList 已有順序
+
+            /// <summary>
+            /// 檢視用 - LinkedList 已有順序
+            /// </summary>
+            public DateTime FirstAccessTime { get; set; }
+
+            /// <summary>
+            /// 檢視用 - LinkedList 已有順序
+            /// </summary>
+            public DateTime? SecondAccessTime { get; set; }  
         }
+
+        #endregion
     }
 }
